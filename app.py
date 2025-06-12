@@ -77,7 +77,9 @@ def load_local_data(ticker, data_folder="data"):
                 'high': 'High', 'High': 'High', 'HIGH': 'High',
                 'low': 'Low', 'Low': 'Low', 'LOW': 'Low',
                 'close': 'Close', 'Close': 'Close', 'CLOSE': 'Close',
-                'volume': 'Volume', 'Volume': 'Volume', 'VOLUME': 'Volume'
+                'volume': 'Volume', 'Volume': 'Volume', 'VOLUME': 'Volume',
+                'adjusted_close': 'Adj Close', 'Adjusted_Close': 'Adj Close', 
+                'ADJUSTED_CLOSE': 'Adj Close', 'adj_close': 'Adj Close'
             }
             
             df.rename(columns=column_mapping, inplace=True)

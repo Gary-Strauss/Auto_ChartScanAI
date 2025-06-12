@@ -26,7 +26,24 @@ st.set_page_config(
 # Function to load data from local CSV files
 def load_local_data(ticker, data_folder="data"):
     """Load End of Day data from local CSV files"""
-    ticker_folder = os.path.join(data_folder, ticker.upper())
+    ticker_upper = ticker.upper()
+    ticker_folder = os.path.join(data_folder, ticker_upper)
+    
+    # If exact match doesn't exist, try to find folder with suffix (e.g., AAPL.US)
+    if not os.path.exists(ticker_folder):
+        # Look for folders that start with the ticker name
+        possible_folders = []
+        if os.path.exists(data_folder):
+            for folder_name in os.listdir(data_folder):
+                folder_path = os.path.join(data_folder, folder_name)
+                if os.path.isdir(folder_path) and folder_name.upper().startswith(ticker_upper):
+                    possible_folders.append(folder_path)
+        
+        if possible_folders:
+            # Use the first matching folder
+            ticker_folder = possible_folders[0]
+        else:
+            return None
     
     if not os.path.exists(ticker_folder):
         return None

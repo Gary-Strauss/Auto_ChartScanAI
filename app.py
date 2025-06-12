@@ -6,6 +6,8 @@ from PIL import Image
 from datetime import datetime, timedelta
 from io import BytesIO
 from ultralytics import YOLO
+import os
+import glob
 
 # Replace the relative path to your weight file
 model_path = 'weights/custom_yolov8.pt'
@@ -21,19 +23,83 @@ st.set_page_config(
     initial_sidebar_state="expanded",    # Expanding sidebar by default
 )
 
-# Function to download and plot chart
-def generate_chart(ticker, interval="1d", chunk_size=180, figsize=(18, 6.5), dpi=100):
-    if interval == "1h":
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=730)
-        period = None
-    else:
-        start_date = None
-        end_date = None
-        period = "max"
+# Function to load data from local CSV files
+def load_local_data(ticker, data_folder="data"):
+    """Load End of Day data from local CSV files"""
+    ticker_folder = os.path.join(data_folder, ticker.upper())
     
-    # Download data for the ticker
-    data = yf.download(ticker, interval=interval, start=start_date, end=end_date, period=period)
+    if not os.path.exists(ticker_folder):
+        return None
+    
+    # Find CSV files in the ticker folder
+    csv_files = glob.glob(os.path.join(ticker_folder, "*.csv"))
+    
+    if not csv_files:
+        return None
+    
+    # Load and combine all CSV files
+    dataframes = []
+    for csv_file in csv_files:
+        try:
+            df = pd.read_csv(csv_file)
+            # Try to identify date column (common names)
+            date_columns = ['Date', 'date', 'DATE', 'Datum', 'datum']
+            date_col = None
+            for col in date_columns:
+                if col in df.columns:
+                    date_col = col
+                    break
+            
+            if date_col:
+                df[date_col] = pd.to_datetime(df[date_col])
+                df.set_index(date_col, inplace=True)
+            
+            # Standardize column names to match yfinance format
+            column_mapping = {
+                'open': 'Open', 'Open': 'Open', 'OPEN': 'Open',
+                'high': 'High', 'High': 'High', 'HIGH': 'High',
+                'low': 'Low', 'Low': 'Low', 'LOW': 'Low',
+                'close': 'Close', 'Close': 'Close', 'CLOSE': 'Close',
+                'volume': 'Volume', 'Volume': 'Volume', 'VOLUME': 'Volume'
+            }
+            
+            df.rename(columns=column_mapping, inplace=True)
+            dataframes.append(df)
+            
+        except Exception as e:
+            st.warning(f"Fehler beim Laden der Datei {csv_file}: {e}")
+            continue
+    
+    if dataframes:
+        # Combine all dataframes and sort by date
+        combined_df = pd.concat(dataframes)
+        combined_df = combined_df.sort_index()
+        # Remove duplicates
+        combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+        return combined_df
+    
+    return None
+
+# Function to download and plot chart
+def generate_chart(ticker, interval="1d", chunk_size=180, figsize=(18, 6.5), dpi=100, use_local_data=False, data_folder="data"):
+    if use_local_data:
+        # Load data from local CSV files
+        data = load_local_data(ticker, data_folder)
+        if data is None:
+            st.error(f"Keine lokalen Daten für {ticker} gefunden. Überprüfen Sie den Ordner {data_folder}/{ticker.upper()}")
+            return None
+    else:
+        if interval == "1h":
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=730)
+            period = None
+        else:
+            start_date = None
+            end_date = None
+            period = "max"
+        
+        # Download data for the ticker
+        data = yf.download(ticker, interval=interval, start=start_date, end=end_date, period=period)
     
     # Ensure the index is a DatetimeIndex and check if data is not empty
     if not data.empty:
@@ -69,11 +135,30 @@ with st.sidebar:
     # Section to generate and download chart
     st.subheader("Generate Chart")
     ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL):")
-    interval = st.selectbox("Select Interval", ["1d", "1h", "1wk"])
+    
+    # Data source selection
+    data_source = st.radio(
+        "Datenquelle wählen:",
+        ["Yahoo Finance", "Lokale CSV-Dateien"],
+        help="Wählen Sie zwischen Online-Daten von Yahoo Finance oder lokalen CSV-Dateien"
+    )
+    
+    use_local_data = data_source == "Lokale CSV-Dateien"
+    
+    if use_local_data:
+        data_folder = st.text_input("Pfad zum Datenordner:", value="data", 
+                                   help="Pfad zum Ordner mit den Ticker-Unterordnern")
+        interval = "1d"  # Local data is typically daily
+        st.info("Lokale Daten werden als tägliche End-of-Day Daten behandelt")
+    else:
+        interval = st.selectbox("Select Interval", ["1d", "1h", "1wk"])
+        data_folder = "data"  # Default value
+    
     chunk_size = 180  # Default chunk size
     if st.button("Generate Chart"):
         if ticker:
-            chart_buffer = generate_chart(ticker, interval=interval, chunk_size=chunk_size)
+            chart_buffer = generate_chart(ticker, interval=interval, chunk_size=chunk_size, 
+                                        use_local_data=use_local_data, data_folder=data_folder)
             if chart_buffer:
                 st.success(f"Chart generated successfully.")
                 st.download_button(
@@ -105,9 +190,14 @@ st.markdown('''
 2. **Detect Objects:** Click the :blue[Detect Objects] button to analyze the uploaded chart.
 
 **Option 2: Generate and Analyze Chart**
-1. **Generate Chart:** Provide the ticker symbol and interval in the sidebar to create and download a chart (latest 180 candles).
+1. **Generate Chart:** Provide the ticker symbol and choose data source (Yahoo Finance or local CSV files) in the sidebar to create and download a chart (latest 180 candles).
 2. **Upload Generated Chart:** Use the sidebar to upload the generated chart image.
 3. **Detect Objects:** Click the :blue[Detect Objects] button to analyze the generated chart.
+
+**Lokale CSV-Dateien verwenden:**
+- Erstellen Sie einen Ordner (z.B. "data") mit Unterordnern für jeden Ticker (z.B. "AAPL", "MSFT")
+- Legen Sie CSV-Dateien mit End-of-Day Daten in die entsprechenden Ticker-Ordner
+- CSV-Dateien sollten Spalten wie Date, Open, High, Low, Close, Volume enthalten
 ''')
 
 # Creating two columns on the main page

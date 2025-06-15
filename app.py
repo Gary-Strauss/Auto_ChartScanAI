@@ -18,6 +18,10 @@ TEMP_CHARTS_PATH = 'temp/charts'
 RESULTS_PATH = 'results'
 INPUT_FILE = 'ticker_list.txt'
 
+# AI Detection Configuration
+CONFIDENCE_THRESHOLD = 0.24  # Minimum confidence für AI-Erkennungen
+SAVE_ONLY_WITH_DETECTIONS = True  # True = nur speichern wenn Erkennungen vorhanden, False = immer speichern
+
 def read_ticker_list(input_file):
     """Liest Ticker-Liste aus TXT-Datei"""
     try:
@@ -125,7 +129,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100):
         print(f"Fehler beim Erstellen des Charts für {ticker}: {e}")
         return None
 
-def perform_detection(image_path, model, confidence=0.24):
+def perform_detection(image_path, model, confidence=CONFIDENCE_THRESHOLD):
     """Führt Objekterkennung auf einem Bild durch"""
     try:
         # Bild laden
@@ -141,8 +145,8 @@ def perform_detection(image_path, model, confidence=0.24):
             if boxes is not None:
                 for box in boxes:
                     conf_value = float(box.conf.tolist()[0]) if len(box.conf) > 0 else 0.0
-                    # Nur Erkennungen mit Confidence > 0.24 behalten
-                    if conf_value > 0.24:
+                    # Nur Erkennungen mit Confidence > Threshold behalten
+                    if conf_value > CONFIDENCE_THRESHOLD:
                         detection_results.append({
                             'bbox': box.xywh.tolist()[0] if len(box.xywh) > 0 else [],
                             'confidence': conf_value,
@@ -189,7 +193,7 @@ def setup_directories():
         os.makedirs(directory, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")
 
-def process_ticker_batch(ticker_list, confidence=0.24):
+def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
     """Verarbeitet alle Ticker sequenziell"""
     # YOLO-Modell laden
     try:
@@ -222,8 +226,10 @@ def process_ticker_batch(ticker_list, confidence=0.24):
         # 3. Objekterkennung durchführen
         detection_results, yolo_results = perform_detection(chart_path, model, confidence)
         
-        # 4. Nur speichern wenn mindestens eine Detection gefunden wurde
-        if len(detection_results) > 0:
+        # 4. Ergebnisse speichern basierend auf Konfiguration
+        should_save = not SAVE_ONLY_WITH_DETECTIONS or len(detection_results) > 0
+        
+        if should_save:
             if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH):
                 successful_processed += 1
                 print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")

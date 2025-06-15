@@ -15,7 +15,7 @@ model_path = 'weights/custom_yolov8.pt'
 PARQUET_DATA_PATH = r'V:\Programmieren\StockDatabase\eod_data\parquet'
 METADATA_DB_PATH = r'V:\Programmieren\StockDatabase\eod_data\metadata.db' 
 TEMP_CHARTS_PATH = 'temp/charts'
-RESULTS_PATH = 'results/detections'
+RESULTS_PATH = 'results'
 INPUT_FILE = 'ticker_list.txt'
 
 def read_ticker_list(input_file):
@@ -156,12 +156,8 @@ def perform_detection(image_path, model, confidence=0.3):
 def save_detection_results(ticker, detection_results, results, output_folder):
     """Speichert AI-Erkennungsergebnisse"""
     try:
-        # Ergebnis-Ordner für Ticker erstellen
-        ticker_results_path = os.path.join(output_folder, ticker)
-        os.makedirs(ticker_results_path, exist_ok=True)
-        
         # Erkennungsergebnisse als JSON speichern
-        results_file = os.path.join(ticker_results_path, f"{ticker}_detection_results.json")
+        results_file = os.path.join(output_folder, f"{ticker}_detection_results.json")
         with open(results_file, 'w') as f:
             json.dump({
                 'ticker': ticker,
@@ -174,10 +170,10 @@ def save_detection_results(ticker, detection_results, results, output_folder):
         if results and len(results) > 0:
             annotated_image = results[0].plot()[:, :, ::-1]  # BGR zu RGB
             annotated_image_pil = Image.fromarray(annotated_image)
-            annotated_image_path = os.path.join(ticker_results_path, f"{ticker}_annotated.png")
+            annotated_image_path = os.path.join(output_folder, f"{ticker}_annotated.png")
             annotated_image_pil.save(annotated_image_path)
             
-        print(f"Erkennungsergebnisse für {ticker} gespeichert in {ticker_results_path}")
+        print(f"Erkennungsergebnisse für {ticker} gespeichert in {output_folder}")
         return True
         
     except Exception as e:

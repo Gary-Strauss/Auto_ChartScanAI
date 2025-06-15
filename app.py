@@ -126,7 +126,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100):
         print(f"Fehler beim Erstellen des Charts für {ticker}: {e}")
         return None
 
-def perform_detection(image_path, model, confidence=0.3):
+def perform_detection(image_path, model, confidence=0.24):
     """Führt Objekterkennung auf einem Bild durch"""
     try:
         # Bild laden
@@ -141,11 +141,14 @@ def perform_detection(image_path, model, confidence=0.3):
             boxes = results[0].boxes
             if boxes is not None:
                 for box in boxes:
-                    detection_results.append({
-                        'bbox': box.xywh.tolist()[0] if len(box.xywh) > 0 else [],
-                        'confidence': float(box.conf.tolist()[0]) if len(box.conf) > 0 else 0.0,
-                        'class': int(box.cls.tolist()[0]) if len(box.cls) > 0 else -1
-                    })
+                    conf_value = float(box.conf.tolist()[0]) if len(box.conf) > 0 else 0.0
+                    # Nur Erkennungen mit Confidence > 0.24 behalten
+                    if conf_value > 0.24:
+                        detection_results.append({
+                            'bbox': box.xywh.tolist()[0] if len(box.xywh) > 0 else [],
+                            'confidence': conf_value,
+                            'class': int(box.cls.tolist()[0]) if len(box.cls) > 0 else -1
+                        })
         
         return detection_results, results
         
@@ -187,7 +190,7 @@ def setup_directories():
         os.makedirs(directory, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")
 
-def process_ticker_batch(ticker_list, confidence=0.3):
+def process_ticker_batch(ticker_list, confidence=0.24):
     """Verarbeitet alle Ticker sequenziell"""
     # YOLO-Modell laden
     try:

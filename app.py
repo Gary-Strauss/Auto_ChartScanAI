@@ -12,8 +12,8 @@ from pathlib import Path
 model_path = 'weights/custom_yolov8.pt'
 
 # Configuration
-PARQUET_DATA_PATH = 'eod_data/parquet'
-METADATA_DB_PATH = 'eod_data/metadata.db'
+PARQUET_DATA_PATH = r'V:\Programmieren\StockDatabase\eod_data\parquet'
+METADATA_DB_PATH = 'V:\Programmieren\StockDatabase\eod_data\metadata.db' 
 TEMP_CHARTS_PATH = 'temp/charts'
 RESULTS_PATH = 'results/detections'
 INPUT_FILE = 'ticker_list.txt'

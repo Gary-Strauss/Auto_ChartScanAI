@@ -16,6 +16,7 @@ PARQUET_DATA_PATH = r'V:\Programmieren\StockDatabase\eod_data\parquet'
 METADATA_DB_PATH = r'V:\Programmieren\StockDatabase\eod_data\metadata.db' 
 TEMP_CHARTS_PATH = 'temp/charts'
 RESULTS_PATH = 'results'
+JSON_RESULTS_PATH = 'results/json'
 INPUT_FILE = 'ticker_list.txt'
 
 # AI Detection Configuration
@@ -163,7 +164,7 @@ def save_detection_results(ticker, detection_results, results, output_folder):
     """Speichert AI-Erkennungsergebnisse"""
     try:
         # Erkennungsergebnisse als JSON speichern
-        results_file = os.path.join(output_folder, f"{ticker}_detection_results.json")
+        results_file = os.path.join(JSON_RESULTS_PATH, f"{ticker}_detection_results.json")
         with open(results_file, 'w') as f:
             json.dump({
                 'ticker': ticker,
@@ -188,7 +189,7 @@ def save_detection_results(ticker, detection_results, results, output_folder):
 
 def setup_directories():
     """Erstellt notwendige Ordnerstruktur"""
-    directories = [TEMP_CHARTS_PATH, RESULTS_PATH]
+    directories = [TEMP_CHARTS_PATH, RESULTS_PATH, JSON_RESULTS_PATH]
     for directory in directories:
         os.makedirs(directory, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")

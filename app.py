@@ -64,9 +64,8 @@ def load_parquet_data(ticker):
         combined_df['date'] = pd.to_datetime(combined_df['date'])
         combined_df = combined_df.sort_values('date')
         
-        # Nur die letzten 180 Tage behalten
-        cutoff_date = datetime.now() - timedelta(days=180)
-        combined_df = combined_df[combined_df['date'] >= cutoff_date]
+        # Nur die letzten 180 Datenpunkte behalten
+        combined_df = combined_df.tail(180)
         
         # Index auf Datum setzen und Spalten für mplfinance anpassen
         combined_df.set_index('date', inplace=True)

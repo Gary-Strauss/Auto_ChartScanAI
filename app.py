@@ -13,7 +13,7 @@ model_path = 'weights/custom_yolov8.pt'
 
 # Configuration
 PARQUET_DATA_PATH = r'V:\Programmieren\StockDatabase\eod_data\parquet'
-METADATA_DB_PATH = 'V:\Programmieren\StockDatabase\eod_data\metadata.db' 
+METADATA_DB_PATH = r'V:\Programmieren\StockDatabase\eod_data\metadata.db' 
 TEMP_CHARTS_PATH = 'temp/charts'
 RESULTS_PATH = 'results/detections'
 INPUT_FILE = 'ticker_list.txt'
@@ -35,14 +35,35 @@ def read_ticker_list(input_file):
 def load_parquet_data(ticker):
     """Lädt Parquet-Daten für einen Ticker basierend auf der dokumentierten Struktur"""
     try:
+        # Debug: Prüfe ob Hauptordner existiert
+        if not os.path.exists(PARQUET_DATA_PATH):
+            print(f"FEHLER: Parquet-Pfad existiert nicht: {PARQUET_DATA_PATH}")
+            return None
+            
         # Alle Parquet-Dateien in allen Jahr-Partitionen laden
         parquet_files = []
-        for year_dir in glob.glob(os.path.join(PARQUET_DATA_PATH, "year=*")):
-            parquet_files.extend(glob.glob(os.path.join(year_dir, "*.parquet")))
+        year_pattern = os.path.join(PARQUET_DATA_PATH, "year=*")
+        year_dirs = glob.glob(year_pattern)
+        
+        print(f"Debug: Suche nach Jahr-Ordnern mit Pattern: {year_pattern}")
+        print(f"Debug: Gefundene Jahr-Ordner: {year_dirs}")
+        
+        for year_dir in year_dirs:
+            parquet_pattern = os.path.join(year_dir, "*.parquet")
+            year_files = glob.glob(parquet_pattern)
+            parquet_files.extend(year_files)
+            print(f"Debug: In {year_dir} gefunden: {len(year_files)} Parquet-Dateien")
         
         if not parquet_files:
             print(f"Keine Parquet-Dateien gefunden in {PARQUET_DATA_PATH}")
-            return None
+            print(f"Debug: Gesamte Ordnerstruktur prüfen...")
+            # Alternative: Alle .parquet Dateien rekursiv suchen
+            all_parquet = glob.glob(os.path.join(PARQUET_DATA_PATH, "**", "*.parquet"), recursive=True)
+            print(f"Debug: Rekursive Suche fand {len(all_parquet)} Parquet-Dateien")
+            if all_parquet:
+                parquet_files = all_parquet
+            else:
+                return None
         
         # Alle Parquet-Dateien laden und nach Ticker filtern
         dataframes = []

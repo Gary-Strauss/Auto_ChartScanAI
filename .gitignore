@@ -163,3 +163,4 @@ cython_debug/
 .aider*
 *.csv
 parquet_structure_documentation.txt
+/eod_data

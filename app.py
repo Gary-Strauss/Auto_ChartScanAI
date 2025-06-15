@@ -222,12 +222,15 @@ def process_ticker_batch(ticker_list, confidence=0.24):
         # 3. Objekterkennung durchführen
         detection_results, yolo_results = perform_detection(chart_path, model, confidence)
         
-        # 4. Ergebnisse speichern
-        if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH):
-            successful_processed += 1
-            print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
+        # 4. Nur speichern wenn mindestens eine Detection gefunden wurde
+        if len(detection_results) > 0:
+            if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH):
+                successful_processed += 1
+                print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
+            else:
+                print(f"✗ Fehler beim Speichern der Ergebnisse für {ticker}")
         else:
-            print(f"✗ Fehler beim Speichern der Ergebnisse für {ticker}")
+            print(f"Überspringe {ticker} - keine Erkennungen gefunden")
         
         # 5. Temporäres Chart-Bild löschen
         try:

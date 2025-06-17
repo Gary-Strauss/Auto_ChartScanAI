@@ -165,3 +165,6 @@ cython_debug/
 parquet_structure_documentation.txt
 /eod_data
 /results
+
+#privacy
+config.txt

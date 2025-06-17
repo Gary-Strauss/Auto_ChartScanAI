@@ -11,13 +11,34 @@ from pathlib import Path
 # Replace the relative path to your weight file
 model_path = 'weights/custom_yolov8.pt'
 
-# Configuration
-PARQUET_DATA_PATH = r'V:\Programmieren\StockDatabase\eod_data\parquet'
-METADATA_DB_PATH = r'V:\Programmieren\StockDatabase\eod_data\metadata.db' 
-TEMP_CHARTS_PATH = 'temp/charts'
-RESULTS_PATH = 'results'
-JSON_RESULTS_PATH = 'results/json'
-INPUT_FILE = 'ticker_list.txt'
+def load_config(config_file='config.txt'):
+    """Lädt Konfiguration aus TXT-Datei"""
+    config = {}
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key.strip()] = value.strip()
+        print(f"Konfiguration geladen aus {config_file}")
+        return config
+    except FileNotFoundError:
+        print(f"Fehler: Konfigurationsdatei {config_file} nicht gefunden")
+        return {}
+    except Exception as e:
+        print(f"Fehler beim Laden der Konfiguration: {e}")
+        return {}
+
+# Configuration laden
+config = load_config()
+PARQUET_DATA_PATH = config.get('PARQUET_DATA_PATH', 'data/parquet')
+METADATA_DB_PATH = config.get('METADATA_DB_PATH', 'data/metadata.db')
+TEMP_CHARTS_PATH = config.get('TEMP_CHARTS_PATH', 'temp/charts')
+RESULTS_PATH = config.get('RESULTS_PATH', 'results')
+JSON_RESULTS_PATH = config.get('JSON_RESULTS_PATH', 'results/json')
+INPUT_FILE = config.get('INPUT_FILE', 'ticker_list.txt')
 
 # AI Detection Configuration
 CONFIDENCE_THRESHOLD = 0.24  # Minimum confidence für AI-Erkennungen

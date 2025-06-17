@@ -7,38 +7,53 @@ import os
 import glob
 import json
 from pathlib import Path
+import configparser
+import logging
 
 # Replace the relative path to your weight file
 model_path = 'weights/custom_yolov8.pt'
 
 def load_config(config_file='config.txt'):
-    """Lädt Konfiguration aus TXT-Datei"""
+    """Lädt Konfiguration aus TXT-Datei mit configparser"""
+    # Logging konfigurieren
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    
+    config_parser = configparser.ConfigParser(allow_no_value=True, inline_comment_prefixes=('#', ';'))
     config = {}
+    
     try:
+        # ConfigParser erwartet Sections, also fügen wir eine DEFAULT Section hinzu
         with open(config_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        config[key.strip()] = value.strip()
-        print(f"Konfiguration geladen aus {config_file}")
+            config_content = '[DEFAULT]\n' + f.read()
+        
+        config_parser.read_string(config_content)
+        
+        # Alle Werte aus der DEFAULT Section extrahieren
+        for key, value in config_parser['DEFAULT'].items():
+            config[key.upper()] = value
+        
+        logger.info(f"Konfiguration erfolgreich geladen aus {config_file}")
         return config
+        
     except FileNotFoundError:
-        print(f"Fehler: Konfigurationsdatei {config_file} nicht gefunden")
-        return {}
+        logger.error(f"Konfigurationsdatei {config_file} nicht gefunden")
+        raise FileNotFoundError(f"Konfigurationsdatei {config_file} nicht gefunden")
+    except configparser.Error as e:
+        logger.error(f"Fehler beim Parsen der Konfigurationsdatei: {e}")
+        raise configparser.Error(f"Fehler beim Parsen der Konfigurationsdatei: {e}")
     except Exception as e:
-        print(f"Fehler beim Laden der Konfiguration: {e}")
-        return {}
+        logger.error(f"Unerwarteter Fehler beim Laden der Konfiguration: {e}")
+        raise
 
 # Configuration laden
 config = load_config()
-PARQUET_DATA_PATH = config.get('PARQUET_DATA_PATH', 'data/parquet')
-METADATA_DB_PATH = config.get('METADATA_DB_PATH', 'data/metadata.db')
-TEMP_CHARTS_PATH = config.get('TEMP_CHARTS_PATH', 'temp/charts')
-RESULTS_PATH = config.get('RESULTS_PATH', 'results')
-JSON_RESULTS_PATH = config.get('JSON_RESULTS_PATH', 'results/json')
-INPUT_FILE = config.get('INPUT_FILE', 'ticker_list.txt')
+PARQUET_DATA_PATH = Path(config.get("PARQUET_DATA_PATH", "data/parquet")).expanduser()
+METADATA_DB_PATH = Path(config.get("METADATA_DB_PATH", "data/metadata.db")).expanduser()
+TEMP_CHARTS_PATH = Path(config.get("TEMP_CHARTS_PATH", "temp/charts")).expanduser()
+RESULTS_PATH = Path(config.get("RESULTS_PATH", "results")).expanduser()
+JSON_RESULTS_PATH = Path(config.get("JSON_RESULTS_PATH", RESULTS_PATH / "json")).expanduser()
+INPUT_FILE = Path(config.get("INPUT_FILE", "ticker_list.txt")).expanduser()
 
 # AI Detection Configuration
 CONFIDENCE_THRESHOLD = 0.24  # Minimum confidence für AI-Erkennungen
@@ -62,7 +77,7 @@ def load_parquet_data(ticker):
     """Lädt Parquet-Daten für einen Ticker basierend auf der dokumentierten Struktur"""
     try:
         # Alle Parquet-Dateien in allen Jahr-Partitionen laden
-        parquet_files = glob.glob(os.path.join(PARQUET_DATA_PATH, "year=*", "*.parquet"))
+        parquet_files = list(PARQUET_DATA_PATH.glob("year=*/*.parquet"))
         
         if not parquet_files:
             print(f"Keine Parquet-Dateien gefunden in {PARQUET_DATA_PATH}")
@@ -141,7 +156,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100):
                           returnfig=True)
         
         # Temporäres Bild speichern
-        temp_image_path = os.path.join(TEMP_CHARTS_PATH, f"{ticker}_chart.png")
+        temp_image_path = TEMP_CHARTS_PATH / f"{ticker}_chart.png"
         fig.savefig(temp_image_path, format='png', dpi=dpi, bbox_inches='tight')
         
         print(f"Chart für {ticker} erstellt: {temp_image_path}")
@@ -185,7 +200,7 @@ def save_detection_results(ticker, detection_results, results, output_folder):
     """Speichert AI-Erkennungsergebnisse"""
     try:
         # Erkennungsergebnisse als JSON speichern
-        results_file = os.path.join(JSON_RESULTS_PATH, f"{ticker}_detection_results.json")
+        results_file = JSON_RESULTS_PATH / f"{ticker}_detection_results.json"
         with open(results_file, 'w') as f:
             json.dump({
                 'ticker': ticker,
@@ -198,7 +213,7 @@ def save_detection_results(ticker, detection_results, results, output_folder):
         if results and len(results) > 0:
             annotated_image = results[0].plot()[:, :, ::-1]  # BGR zu RGB
             annotated_image_pil = Image.fromarray(annotated_image)
-            annotated_image_path = os.path.join(output_folder, f"{ticker}_annotated.png")
+            annotated_image_path = Path(output_folder) / f"{ticker}_annotated.png"
             annotated_image_pil.save(annotated_image_path)
             
         print(f"Erkennungsergebnisse für {ticker} gespeichert in {output_folder}")
@@ -212,7 +227,7 @@ def setup_directories():
     """Erstellt notwendige Ordnerstruktur"""
     directories = [TEMP_CHARTS_PATH, RESULTS_PATH, JSON_RESULTS_PATH]
     for directory in directories:
-        os.makedirs(directory, exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")
 
 def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
@@ -262,7 +277,7 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
         
         # 5. Temporäres Chart-Bild löschen
         try:
-            os.remove(chart_path)
+            Path(chart_path).unlink(missing_ok=True)
         except:
             pass
     

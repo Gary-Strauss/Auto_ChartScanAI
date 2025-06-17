@@ -15,8 +15,6 @@ model_path = 'weights/custom_yolov8.pt'
 
 def load_config(config_file='config.txt'):
     """Lädt Konfiguration aus TXT-Datei mit configparser"""
-    # Logging konfigurieren
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
     
     config_parser = configparser.ConfigParser(allow_no_value=True, inline_comment_prefixes=('#', ';'))
@@ -286,6 +284,9 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
 
 def main():
     """Hauptfunktion für Batch-Processing"""
+    # Logging konfigurieren
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
     print("=== ChartScanAI Batch-Processing ===")
     
     # 1. Ordnerstruktur einrichten

@@ -34,12 +34,12 @@ def load_config(config_file='config.txt'):
         logger.info(f"Konfiguration erfolgreich geladen aus {config_file}")
         return config
         
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         logger.error(f"Konfigurationsdatei {config_file} nicht gefunden")
-        raise FileNotFoundError(f"Konfigurationsdatei {config_file} nicht gefunden")
+        raise FileNotFoundError(f"Konfigurationsdatei {config_file} nicht gefunden") from e
     except configparser.Error as e:
         logger.error(f"Fehler beim Parsen der Konfigurationsdatei: {e}")
-        raise configparser.Error(f"Fehler beim Parsen der Konfigurationsdatei: {e}")
+        raise configparser.Error(f"Fehler beim Parsen der Konfigurationsdatei: {e}") from e
     except Exception as e:
         logger.error(f"Unerwarteter Fehler beim Laden der Konfiguration: {e}")
         raise

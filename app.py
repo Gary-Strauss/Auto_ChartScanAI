@@ -298,9 +298,53 @@ def perform_detection(image_path, model, confidence=CONFIDENCE_THRESHOLD):
         print(f"Fehler bei der Objekterkennung für {image_path}: {e}")
         return [], None
 
+def analyze_detection_positions(detection_results, chunk_size=180):
+    """Analysiert die Positionen der Erkennungen im Chart"""
+    if not detection_results:
+        return None
+    
+    positions = []
+    for detection in detection_results:
+        if 'bbox' in detection and len(detection['bbox']) >= 4:
+            x_center_norm = detection['bbox'][0]  # Normalisierte x-Position (0-1)
+            chart_index = int(x_center_norm * chunk_size)  # Chart-Index (0 bis chunk_size-1)
+            positions.append({
+                'x_normalized': x_center_norm,
+                'chart_index': chart_index,
+                'confidence': detection.get('confidence', 0),
+                'class': detection.get('class', -1)
+            })
+    
+    if not positions:
+        return None
+    
+    # Sortiere nach x-Position
+    positions.sort(key=lambda x: x['x_normalized'])
+    
+    # Analysiere Positionen
+    rightmost = positions[-1]  # Rechteste Erkennung
+    leftmost = positions[0]    # Linkeste Erkennung
+    
+    # Bestimme in welcher Bildhälfte die rechteste Erkennung liegt
+    rightmost_half = "zweite Hälfte" if rightmost['x_normalized'] > 0.5 else "erste Hälfte"
+    
+    analysis = {
+        'total_detections': len(positions),
+        'rightmost_detection': rightmost,
+        'leftmost_detection': leftmost,
+        'rightmost_in_half': rightmost_half,
+        'spread': rightmost['x_normalized'] - leftmost['x_normalized'],
+        'all_positions': positions
+    }
+    
+    return analysis
+
 def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None, chunk_size=180):
     """Speichert AI-Erkennungsergebnisse"""
     try:
+        # Positionsanalyse durchführen
+        position_analysis = analyze_detection_positions(detection_results, chunk_size)
+        
         # Dateinamen für Monte Carlo Runs anpassen
         if is_monte_carlo and mc_run is not None:
             json_filename = f"{ticker}_mc_run_{mc_run}_detection_results.json"
@@ -319,8 +363,14 @@ def save_detection_results(ticker, detection_results, results, output_folder, is
                 'total_detections': len(detection_results),
                 'monte_carlo': is_monte_carlo,
                 'mc_start_index': mc_start_index if is_monte_carlo else None,
-                'mc_run': mc_run if is_monte_carlo else None
+                'mc_run': mc_run if is_monte_carlo else None,
+                'position_analysis': position_analysis
             }, f, indent=2)
+        
+        # Positionsinfo ausgeben
+        if position_analysis:
+            rightmost = position_analysis['rightmost_detection']
+            print(f"    Rechteste Erkennung: Chart-Index {rightmost['chart_index']}, {position_analysis['rightmost_in_half']}")
         
         # Annotiertes Bild speichern (falls verfügbar)
         if results and len(results) > 0:

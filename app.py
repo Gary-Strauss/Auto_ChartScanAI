@@ -237,7 +237,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
         
         # Monte Carlo Trennlinie hinzufügen wenn aktiviert
         if use_monte_carlo:
-            ax[0].axvline(x=mc_start_index, color='red', linestyle='--', alpha=0.7, linewidth=2)
+            ax[0].axvline(x=mc_start_index, color='darkblue', linestyle='--', alpha=0.7, linewidth=2)
         
         # Temporäres Bild speichern
         suffix = "_mc_chart.png" if use_monte_carlo else "_chart.png"
@@ -320,8 +320,8 @@ def save_detection_results(ticker, detection_results, results, output_folder, is
                 # Position der Trennlinie im Chart-Bereich
                 line_x = chart_start_x + int((mc_start_index / 180) * chart_width)
                 
-                # Dicke rote Linie zeichnen
-                cv2.line(annotated_image, (line_x, 0), (line_x, height), (0, 0, 255), thickness=4)
+                # Dicke dunkelblaue Linie zeichnen (BGR Format: dunkelblau = 139, 0, 0)
+                cv2.line(annotated_image, (line_x, 0), (line_x, height), (139, 0, 0), thickness=4)
                 
                 # Text hinzufügen
                 font = cv2.FONT_HERSHEY_SIMPLEX
@@ -334,8 +334,8 @@ def save_detection_results(ticker, detection_results, results, output_folder, is
                 cv2.rectangle(annotated_image, (text_x - 5, text_y - 20), 
                              (text_x + text_size[0] + 5, text_y + 5), (255, 255, 255), -1)
                 
-                # Roten Text schreiben
-                cv2.putText(annotated_image, text, (text_x, text_y), font, 0.7, (0, 0, 255), 2)
+                # Dunkelblauen Text schreiben (BGR Format: dunkelblau = 139, 0, 0)
+                cv2.putText(annotated_image, text, (text_x, text_y), font, 0.7, (139, 0, 0), 2)
             
             # BGR zu RGB konvertieren für PIL
             if annotated_image.shape[2] == 3:  # Falls BGR Format

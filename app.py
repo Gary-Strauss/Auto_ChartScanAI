@@ -226,7 +226,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
             print(f"Zu wenige Daten für {ticker}: {len(data_subset)} Datenpunkte")
             return None
         
-        # Chart erstellen
+        # Chart erstellen mit logarithmischer Skalierung
         fig, ax = mpf.plot(data_subset, 
                           type="candle", 
                           style="yahoo",
@@ -236,7 +236,11 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
                           ylabel_lower="",
                           volume=False,
                           figsize=figsize,
+                          scale_padding={'left': 0.3, 'top': 0.8, 'right': 1.0, 'bottom': 0.8},
                           returnfig=True)
+        
+        # Y-Achse auf logarithmische Skalierung setzen
+        ax[0].set_yscale('log')
         
         # Monte Carlo Trennlinie hinzufügen wenn aktiviert
         if use_monte_carlo:

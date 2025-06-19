@@ -251,6 +251,10 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
         temp_image_path = TEMP_CHARTS_PATH / f"{ticker}{suffix}"
         fig.savefig(temp_image_path, format='png', dpi=dpi, bbox_inches='tight')
         
+        # Figur explizit schließen um Speicher freizugeben
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+        
         print(f"Chart für {ticker} erstellt: {temp_image_path}")
         return temp_image_path
         

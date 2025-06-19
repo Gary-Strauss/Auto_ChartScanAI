@@ -57,7 +57,7 @@ JSON_RESULTS_PATH = Path(config.get("JSON_RESULTS_PATH", RESULTS_PATH / "json"))
 INPUT_FILE = Path(config.get("INPUT_FILE", "ticker_list.txt")).expanduser()
 
 # AI Detection Configuration
-CONFIDENCE_THRESHOLD = 0.24  # Minimum confidence für AI-Erkennungen
+CONFIDENCE_THRESHOLD = 0.33  # Minimum confidence für AI-Erkennungen
 SAVE_ONLY_WITH_DETECTIONS = True  # True = nur speichern wenn Erkennungen vorhanden, False = immer speichern
 
 def read_ticker_list(input_file):

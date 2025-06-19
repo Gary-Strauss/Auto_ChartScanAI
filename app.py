@@ -60,6 +60,9 @@ INPUT_FILE = Path(config.get("INPUT_FILE", "ticker_list.txt")).expanduser()
 CONFIDENCE_THRESHOLD = 0.33  # Minimum confidence für AI-Erkennungen
 SAVE_ONLY_WITH_DETECTIONS = True  # True = nur speichern wenn Erkennungen vorhanden, False = immer speichern
 
+# Monte Carlo Configuration
+MC_REPETITIONS = 4  # Anzahl der Monte Carlo Wiederholungen pro Ticker
+
 def read_ticker_list(input_file):
     """Liest Ticker-Liste aus TXT-Datei"""
     try:
@@ -281,11 +284,19 @@ def perform_detection(image_path, model, confidence=CONFIDENCE_THRESHOLD):
         print(f"Fehler bei der Objekterkennung für {image_path}: {e}")
         return [], None
 
-def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None):
+def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None):
     """Speichert AI-Erkennungsergebnisse"""
     try:
+        # Dateinamen für Monte Carlo Runs anpassen
+        if is_monte_carlo and mc_run is not None:
+            json_filename = f"{ticker}_mc_run_{mc_run}_detection_results.json"
+            annotated_filename = f"{ticker}_mc_run_{mc_run}_annotated.png"
+        else:
+            json_filename = f"{ticker}_detection_results.json"
+            annotated_filename = f"{ticker}_annotated.png"
+        
         # Erkennungsergebnisse als JSON speichern
-        results_file = JSON_RESULTS_PATH / f"{ticker}_detection_results.json"
+        results_file = JSON_RESULTS_PATH / json_filename
         with open(results_file, 'w') as f:
             json.dump({
                 'ticker': ticker,
@@ -293,7 +304,8 @@ def save_detection_results(ticker, detection_results, results, output_folder, is
                 'detections': detection_results,
                 'total_detections': len(detection_results),
                 'monte_carlo': is_monte_carlo,
-                'mc_start_index': mc_start_index if is_monte_carlo else None
+                'mc_start_index': mc_start_index if is_monte_carlo else None,
+                'mc_run': mc_run if is_monte_carlo else None
             }, f, indent=2)
         
         # Annotiertes Bild speichern (falls verfügbar)
@@ -344,7 +356,7 @@ def save_detection_results(ticker, detection_results, results, output_folder, is
                 annotated_image_rgb = annotated_image
                 
             annotated_image_pil = Image.fromarray(annotated_image_rgb)
-            annotated_image_path = Path(output_folder) / f"{ticker}_annotated.png"
+            annotated_image_path = Path(output_folder) / annotated_filename
             annotated_image_pil.save(annotated_image_path)
             
         print(f"Erkennungsergebnisse für {ticker} gespeichert in {output_folder}")
@@ -373,57 +385,76 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
     
     successful_processed = 0
     total_tickers = len(ticker_list)
+    total_runs = total_tickers * MC_REPETITIONS
     chunk_size = 180  # Definiere chunk_size hier für die Berechnung
     
     print(f"\nStarte Monte Carlo Batch-Verarbeitung von {total_tickers} Tickern...")
     print(f"Monte Carlo Tage: {mc_days}")
+    print(f"Wiederholungen pro Ticker: {MC_REPETITIONS}")
+    print(f"Gesamtanzahl Verarbeitungen: {total_runs}")
+    
+    run_counter = 0
     
     for i, ticker in enumerate(ticker_list, 1):
         print(f"\n[{i}/{total_tickers}] Verarbeite {ticker} mit Monte Carlo...")
         
-        # 1. Parquet-Daten laden
+        # 1. Parquet-Daten einmal laden für alle Wiederholungen
         data = load_parquet_data(ticker)
         if data is None:
             print(f"Überspringe {ticker} - keine Daten verfügbar")
             continue
         
-        # 2. Chart mit Monte Carlo generieren
-        chart_path = generate_chart(ticker, data, use_monte_carlo=True, mc_days=mc_days)
-        if chart_path is None:
-            print(f"Überspringe {ticker} - Chart-Erstellung fehlgeschlagen")
-            continue
+        ticker_successful_runs = 0
         
-        # 3. Objekterkennung durchführen
-        detection_results, yolo_results = perform_detection(chart_path, model, confidence)
-        
-        # 4. Ergebnisse speichern basierend auf Konfiguration
-        should_save = not SAVE_ONLY_WITH_DETECTIONS or len(detection_results) > 0
-        
-        if should_save:
-            # Monte Carlo Ergebnisse in separatem Ordner speichern
-            mc_results_path = RESULTS_PATH / "monte_carlo"
-            mc_results_path.mkdir(exist_ok=True)
+        # Monte Carlo Wiederholungen für diesen Ticker
+        for mc_run in range(1, MC_REPETITIONS + 1):
+            run_counter += 1
+            print(f"  Run {mc_run}/{MC_REPETITIONS} für {ticker} (Gesamt: {run_counter}/{total_runs})")
             
-            # mc_start_index für die Trennlinie berechnen
-            mc_start_index = chunk_size - mc_days
+            # 2. Chart mit Monte Carlo generieren (jeder Run hat andere Zufallswerte)
+            chart_path = generate_chart(ticker, data, use_monte_carlo=True, mc_days=mc_days)
+            if chart_path is None:
+                print(f"    ✗ Chart-Erstellung fehlgeschlagen für Run {mc_run}")
+                continue
             
-            if save_detection_results(ticker, detection_results, yolo_results, mc_results_path, 
-                                    is_monte_carlo=True, mc_start_index=mc_start_index):
-                successful_processed += 1
-                print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
+            # 3. Objekterkennung durchführen
+            detection_results, yolo_results = perform_detection(chart_path, model, confidence)
+            
+            # 4. Ergebnisse speichern basierend auf Konfiguration
+            should_save = not SAVE_ONLY_WITH_DETECTIONS or len(detection_results) > 0
+            
+            if should_save:
+                # Monte Carlo Ergebnisse in separatem Ordner speichern
+                mc_results_path = RESULTS_PATH / "monte_carlo"
+                mc_results_path.mkdir(exist_ok=True)
+                
+                # mc_start_index für die Trennlinie berechnen
+                mc_start_index = chunk_size - mc_days
+                
+                if save_detection_results(ticker, detection_results, yolo_results, mc_results_path, 
+                                        is_monte_carlo=True, mc_start_index=mc_start_index, mc_run=mc_run):
+                    ticker_successful_runs += 1
+                    print(f"    ✓ Run {mc_run} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
+                else:
+                    print(f"    ✗ Fehler beim Speichern der Ergebnisse für Run {mc_run}")
             else:
-                print(f"✗ Fehler beim Speichern der Ergebnisse für {ticker}")
-        else:
-            print(f"Überspringe {ticker} - keine Erkennungen gefunden")
+                print(f"    - Run {mc_run} übersprungen (keine Erkennungen)")
+            
+            # 5. Temporäres Chart-Bild löschen
+            try:
+                Path(chart_path).unlink(missing_ok=True)
+            except:
+                pass
         
-        # 5. Temporäres Chart-Bild löschen
-        try:
-            Path(chart_path).unlink(missing_ok=True)
-        except:
-            pass
+        if ticker_successful_runs > 0:
+            successful_processed += 1
+            print(f"✓ {ticker} abgeschlossen: {ticker_successful_runs}/{MC_REPETITIONS} Runs erfolgreich")
+        else:
+            print(f"✗ {ticker} fehlgeschlagen: 0/{MC_REPETITIONS} Runs erfolgreich")
     
     print(f"\n=== Monte Carlo Batch-Verarbeitung abgeschlossen ===")
-    print(f"Erfolgreich verarbeitet: {successful_processed}/{total_tickers} Ticker")
+    print(f"Erfolgreich verarbeitete Ticker: {successful_processed}/{total_tickers}")
+    print(f"Gesamtanzahl erfolgreiche Runs: {sum([MC_REPETITIONS if i < successful_processed else 0 for i in range(total_tickers)])}")
 
 def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
     """Verarbeitet alle Ticker sequenziell"""

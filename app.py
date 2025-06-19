@@ -9,6 +9,9 @@ import json
 from pathlib import Path
 import configparser
 import logging
+import random
+import cv2
+import numpy as np
 
 # Replace the relative path to your weight file
 model_path = 'weights/custom_yolov8.pt'
@@ -71,6 +74,64 @@ def read_ticker_list(input_file):
         print(f"Fehler beim Lesen der Ticker-Liste: {e}")
         return []
 
+def extract_relative_patterns(data):
+    """Extrahiert relative Bewegungsmuster aus historischen OHLCV-Daten"""
+    patterns = []
+    
+    for i in range(1, len(data)):
+        prev_close = data.iloc[i-1]['Close']
+        current = data.iloc[i]
+        
+        pattern = {
+            'open_change': (current['Open'] - prev_close) / prev_close,
+            'high_rel': (current['High'] - current['Open']) / current['Open'],
+            'low_rel': (current['Low'] - current['Open']) / current['Open'],
+            'close_rel': (current['Close'] - current['Open']) / current['Open'],
+            'volume_change': current['Volume'] / data.iloc[i-1]['Volume'] if data.iloc[i-1]['Volume'] > 0 else 1.0
+        }
+        patterns.append(pattern)
+    
+    return patterns
+
+def generate_monte_carlo_extension(data, patterns, days=30):
+    """Generiert Monte Carlo Verlängerung basierend auf historischen Mustern"""
+    extended_data = data.copy()
+    
+    for day in range(1, days + 1):
+        # Zufälliges Muster auswählen
+        pattern = random.choice(patterns)
+        
+        # Neue Werte basierend auf dem Muster berechnen
+        prev_close = extended_data.iloc[-1]['Close']
+        
+        new_open = prev_close * (1 + pattern['open_change'])
+        new_high = new_open * (1 + pattern['high_rel'])
+        new_low = new_open * (1 + pattern['low_rel'])
+        new_close = new_open * (1 + pattern['close_rel'])
+        new_volume = extended_data.iloc[-1]['Volume'] * pattern['volume_change']
+        
+        # Sicherstellen dass High >= max(Open, Close) und Low <= min(Open, Close)
+        new_high = max(new_high, new_open, new_close)
+        new_low = min(new_low, new_open, new_close)
+        
+        # Neues Datum (nächster Handelstag)
+        last_date = extended_data.index[-1]
+        new_date = last_date + timedelta(days=1)
+        
+        # Neue Zeile hinzufügen
+        new_row = pd.Series({
+            'Open': new_open,
+            'High': new_high,
+            'Low': new_low,
+            'Close': new_close,
+            'Adj Close': new_close,  # Vereinfachung
+            'Volume': int(new_volume)
+        }, name=new_date)
+        
+        extended_data = pd.concat([extended_data, new_row.to_frame().T])
+    
+    return extended_data
+
 def load_parquet_data(ticker):
     """Lädt Parquet-Daten für einen Ticker basierend auf der dokumentierten Struktur"""
     try:
@@ -127,15 +188,36 @@ def load_parquet_data(ticker):
         print(f"Fehler beim Laden der Parquet-Daten für {ticker}: {e}")
         return None
 
-def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100):
+def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use_monte_carlo=False, mc_days=30):
     """Generiert Chart aus Parquet-Daten und speichert als temporäres Bild"""
     try:
         if data is None or data.empty:
             print(f"Keine Daten für {ticker} verfügbar")
             return None
         
-        # Letzte 180 Tage auswählen
-        data_subset = data.iloc[-chunk_size:]
+        # Monte Carlo Verlängerung wenn aktiviert
+        if use_monte_carlo:
+            # Muster aus den Daten extrahieren
+            patterns = extract_relative_patterns(data)
+            
+            if len(patterns) < 10:
+                print(f"Zu wenige Daten für Monte Carlo Muster für {ticker}: {len(patterns)} Muster")
+                return None
+            
+            # Monte Carlo Verlängerung generieren
+            extended_data = generate_monte_carlo_extension(data, patterns, mc_days)
+            
+            # Nur die letzten chunk_size Kerzen für den Chart verwenden
+            data_subset = extended_data.tail(chunk_size)
+            
+            # Markierung wo echte Daten enden und MC beginnt
+            mc_start_index = chunk_size - mc_days
+            chart_title = f"{ticker} Latest {len(data_subset)} Candles (MC: {mc_days} days)"
+            
+        else:
+            # Letzte 180 Tage auswählen
+            data_subset = data.iloc[-chunk_size:]
+            chart_title = f"{ticker} Latest {len(data_subset)} Candles"
         
         if len(data_subset) < 10:  # Mindestens 10 Datenpunkte für sinnvollen Chart
             print(f"Zu wenige Daten für {ticker}: {len(data_subset)} Datenpunkte")
@@ -145,7 +227,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100):
         fig, ax = mpf.plot(data_subset, 
                           type="candle", 
                           style="yahoo",
-                          title=f"{ticker} Latest {len(data_subset)} Candles",
+                          title=chart_title,
                           axisoff=True,
                           ylabel="",
                           ylabel_lower="",
@@ -153,8 +235,13 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100):
                           figsize=figsize,
                           returnfig=True)
         
+        # Monte Carlo Trennlinie hinzufügen wenn aktiviert
+        if use_monte_carlo:
+            ax[0].axvline(x=mc_start_index, color='red', linestyle='--', alpha=0.7, linewidth=2)
+        
         # Temporäres Bild speichern
-        temp_image_path = TEMP_CHARTS_PATH / f"{ticker}_chart.png"
+        suffix = "_mc_chart.png" if use_monte_carlo else "_chart.png"
+        temp_image_path = TEMP_CHARTS_PATH / f"{ticker}{suffix}"
         fig.savefig(temp_image_path, format='png', dpi=dpi, bbox_inches='tight')
         
         print(f"Chart für {ticker} erstellt: {temp_image_path}")
@@ -194,7 +281,7 @@ def perform_detection(image_path, model, confidence=CONFIDENCE_THRESHOLD):
         print(f"Fehler bei der Objekterkennung für {image_path}: {e}")
         return [], None
 
-def save_detection_results(ticker, detection_results, results, output_folder):
+def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None):
     """Speichert AI-Erkennungsergebnisse"""
     try:
         # Erkennungsergebnisse als JSON speichern
@@ -204,13 +291,59 @@ def save_detection_results(ticker, detection_results, results, output_folder):
                 'ticker': ticker,
                 'timestamp': datetime.now().isoformat(),
                 'detections': detection_results,
-                'total_detections': len(detection_results)
+                'total_detections': len(detection_results),
+                'monte_carlo': is_monte_carlo,
+                'mc_start_index': mc_start_index if is_monte_carlo else None
             }, f, indent=2)
         
         # Annotiertes Bild speichern (falls verfügbar)
         if results and len(results) > 0:
-            annotated_image = results[0].plot()[:, :, ::-1]  # BGR zu RGB
-            annotated_image_pil = Image.fromarray(annotated_image)
+            annotated_image = results[0].plot()
+            
+            # Monte Carlo Trennlinie hinzufügen wenn aktiviert
+            if is_monte_carlo and mc_start_index is not None:
+                # Sicherstellen dass das Bild im richtigen Format für OpenCV ist
+                if not isinstance(annotated_image, np.ndarray):
+                    annotated_image = np.array(annotated_image)
+                
+                # Sicherstellen dass es ein kontinuierliches Array ist
+                annotated_image = np.ascontiguousarray(annotated_image)
+                
+                # Bildabmessungen
+                height, width = annotated_image.shape[:2]
+                
+                # X-Position der Trennlinie berechnen (basierend auf Chart-Breite)
+                # Annahme: Chart nimmt etwa 90% der Bildbreite ein, startet bei 5%
+                chart_start_x = int(width * 0.05)
+                chart_width = int(width * 0.90)
+                
+                # Position der Trennlinie im Chart-Bereich
+                line_x = chart_start_x + int((mc_start_index / 180) * chart_width)
+                
+                # Dicke rote Linie zeichnen
+                cv2.line(annotated_image, (line_x, 0), (line_x, height), (0, 0, 255), thickness=4)
+                
+                # Text hinzufügen
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                text = "MONTE CARLO START"
+                text_size = cv2.getTextSize(text, font, 0.7, 2)[0]
+                text_x = line_x - text_size[0] // 2
+                text_y = 30
+                
+                # Weißer Hintergrund für Text
+                cv2.rectangle(annotated_image, (text_x - 5, text_y - 20), 
+                             (text_x + text_size[0] + 5, text_y + 5), (255, 255, 255), -1)
+                
+                # Roten Text schreiben
+                cv2.putText(annotated_image, text, (text_x, text_y), font, 0.7, (0, 0, 255), 2)
+            
+            # BGR zu RGB konvertieren für PIL
+            if annotated_image.shape[2] == 3:  # Falls BGR Format
+                annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+            else:
+                annotated_image_rgb = annotated_image
+                
+            annotated_image_pil = Image.fromarray(annotated_image_rgb)
             annotated_image_path = Path(output_folder) / f"{ticker}_annotated.png"
             annotated_image_pil.save(annotated_image_path)
             
@@ -227,6 +360,70 @@ def setup_directories():
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")
+
+def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOLD, mc_days=30):
+    """Verarbeitet alle Ticker sequenziell mit Monte Carlo Verlängerung"""
+    # YOLO-Modell laden
+    try:
+        model = YOLO(model_path)
+        print(f"YOLO-Modell geladen: {model_path}")
+    except Exception as e:
+        print(f"Fehler beim Laden des YOLO-Modells: {e}")
+        return
+    
+    successful_processed = 0
+    total_tickers = len(ticker_list)
+    chunk_size = 180  # Definiere chunk_size hier für die Berechnung
+    
+    print(f"\nStarte Monte Carlo Batch-Verarbeitung von {total_tickers} Tickern...")
+    print(f"Monte Carlo Tage: {mc_days}")
+    
+    for i, ticker in enumerate(ticker_list, 1):
+        print(f"\n[{i}/{total_tickers}] Verarbeite {ticker} mit Monte Carlo...")
+        
+        # 1. Parquet-Daten laden
+        data = load_parquet_data(ticker)
+        if data is None:
+            print(f"Überspringe {ticker} - keine Daten verfügbar")
+            continue
+        
+        # 2. Chart mit Monte Carlo generieren
+        chart_path = generate_chart(ticker, data, use_monte_carlo=True, mc_days=mc_days)
+        if chart_path is None:
+            print(f"Überspringe {ticker} - Chart-Erstellung fehlgeschlagen")
+            continue
+        
+        # 3. Objekterkennung durchführen
+        detection_results, yolo_results = perform_detection(chart_path, model, confidence)
+        
+        # 4. Ergebnisse speichern basierend auf Konfiguration
+        should_save = not SAVE_ONLY_WITH_DETECTIONS or len(detection_results) > 0
+        
+        if should_save:
+            # Monte Carlo Ergebnisse in separatem Ordner speichern
+            mc_results_path = RESULTS_PATH / "monte_carlo"
+            mc_results_path.mkdir(exist_ok=True)
+            
+            # mc_start_index für die Trennlinie berechnen
+            mc_start_index = chunk_size - mc_days
+            
+            if save_detection_results(ticker, detection_results, yolo_results, mc_results_path, 
+                                    is_monte_carlo=True, mc_start_index=mc_start_index):
+                successful_processed += 1
+                print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
+            else:
+                print(f"✗ Fehler beim Speichern der Ergebnisse für {ticker}")
+        else:
+            print(f"Überspringe {ticker} - keine Erkennungen gefunden")
+        
+        # 5. Temporäres Chart-Bild löschen
+        try:
+            Path(chart_path).unlink(missing_ok=True)
+        except:
+            pass
+    
+    print(f"\n=== Monte Carlo Batch-Verarbeitung abgeschlossen ===")
+    print(f"Erfolgreich verarbeitet: {successful_processed}/{total_tickers} Ticker")
 
 def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
     """Verarbeitet alle Ticker sequenziell"""
@@ -253,7 +450,7 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
             continue
         
         # 2. Chart generieren
-        chart_path = generate_chart(ticker, data)
+        chart_path = generate_chart(ticker, data, use_monte_carlo=False)
         if chart_path is None:
             print(f"Überspringe {ticker} - Chart-Erstellung fehlgeschlagen")
             continue
@@ -265,7 +462,8 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
         should_save = not SAVE_ONLY_WITH_DETECTIONS or len(detection_results) > 0
         
         if should_save:
-            if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH):
+            if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH, 
+                                    is_monte_carlo=False):
                 successful_processed += 1
                 print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
             else:
@@ -298,8 +496,19 @@ def main():
         print(f"Keine Ticker gefunden. Erstellen Sie eine {INPUT_FILE} mit einem Ticker pro Zeile.")
         return
     
-    # 3. Batch-Verarbeitung starten
-    process_ticker_batch(ticker_list)
+    # 3. Monte Carlo Modus abfragen
+    print("\nOptionen:")
+    print("1. Normale Verarbeitung")
+    print("2. Monte Carlo Verarbeitung")
+    
+    choice = input("Wählen Sie eine Option (1 oder 2): ").strip()
+    
+    if choice == "2":
+        mc_days = input("Anzahl Monte Carlo Tage (Standard: 30): ").strip()
+        mc_days = int(mc_days) if mc_days.isdigit() else 30
+        process_ticker_batch_monte_carlo(ticker_list, CONFIDENCE_THRESHOLD, mc_days)
+    else:
+        process_ticker_batch(ticker_list)
     
     print("\nBatch-Processing beendet.")
 

@@ -301,32 +301,6 @@ def perform_detection(image_path, model, confidence=CONFIDENCE_THRESHOLD):
 def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None, chunk_size=180):
     """Speichert AI-Erkennungsergebnisse"""
     try:
-        # Monte Carlo Filter: Nur Erkennungen in den letzten X Tagen vor MC-Start speichern
-        if is_monte_carlo and mc_start_index is not None:
-            filtered_detections = []
-            
-            # Bereich definieren: letzten MC_DETECTION_FILTER_DAYS vor Monte Carlo Start
-            filter_start_index = max(0, mc_start_index - MC_DETECTION_FILTER_DAYS)
-            filter_end_index = mc_start_index
-            
-            for detection in detection_results:
-                # Bounding Box Position extrahieren (x_center normalisiert)
-                if 'bbox' in detection and len(detection['bbox']) >= 4:
-                    x_center_norm = detection['bbox'][0]  # Normalisierte x-Position (0-1)
-                    
-                    # In Chart-Index umrechnen (0 bis chunk_size-1)
-                    detection_index = int(x_center_norm * chunk_size)
-                    
-                    # Prüfen ob Erkennung im gewünschten Zeitbereich liegt
-                    if filter_start_index <= detection_index < filter_end_index:
-                        filtered_detections.append(detection)
-            
-            # Gefilterte Erkennungen verwenden
-            original_count = len(detection_results)
-            detection_results = filtered_detections
-            
-            print(f"    Monte Carlo Filter: {len(filtered_detections)} von ursprünglich {original_count} Erkennungen in Tagen {filter_start_index}-{filter_end_index}")
-        
         # Dateinamen für Monte Carlo Runs anpassen
         if is_monte_carlo and mc_run is not None:
             json_filename = f"{ticker}_mc_run_{mc_run}_detection_results.json"

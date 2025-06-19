@@ -12,6 +12,7 @@ import logging
 import random
 import cv2
 import numpy as np
+import sys
 
 # Replace the relative path to your weight file
 model_path = 'weights/custom_yolov8.pt'
@@ -62,6 +63,11 @@ SAVE_ONLY_WITH_DETECTIONS = True  # True = nur speichern wenn Erkennungen vorhan
 
 # Monte Carlo Configuration
 MC_REPETITIONS = 4  # Anzahl der Monte Carlo Wiederholungen pro Ticker
+MC_DETECTION_FILTER_DAYS = 20  # Nur Erkennungen in den letzten X Tagen vor Monte Carlo speichern
+
+# Automatische Ausführung Configuration
+AUTO_MODE_MC_REPETITIONS = 1  # Wiederholungen bei automatischer Ausführung
+AUTO_MODE_MC_DAYS = 30  # Monte Carlo Tage bei automatischer Ausführung
 
 def read_ticker_list(input_file):
     """Liest Ticker-Liste aus TXT-Datei"""
@@ -292,9 +298,35 @@ def perform_detection(image_path, model, confidence=CONFIDENCE_THRESHOLD):
         print(f"Fehler bei der Objekterkennung für {image_path}: {e}")
         return [], None
 
-def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None):
+def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None, chunk_size=180):
     """Speichert AI-Erkennungsergebnisse"""
     try:
+        # Monte Carlo Filter: Nur Erkennungen in den letzten X Tagen vor MC-Start speichern
+        if is_monte_carlo and mc_start_index is not None:
+            filtered_detections = []
+            
+            # Bereich definieren: letzten MC_DETECTION_FILTER_DAYS vor Monte Carlo Start
+            filter_start_index = max(0, mc_start_index - MC_DETECTION_FILTER_DAYS)
+            filter_end_index = mc_start_index
+            
+            for detection in detection_results:
+                # Bounding Box Position extrahieren (x_center normalisiert)
+                if 'bbox' in detection and len(detection['bbox']) >= 4:
+                    x_center_norm = detection['bbox'][0]  # Normalisierte x-Position (0-1)
+                    
+                    # In Chart-Index umrechnen (0 bis chunk_size-1)
+                    detection_index = int(x_center_norm * chunk_size)
+                    
+                    # Prüfen ob Erkennung im gewünschten Zeitbereich liegt
+                    if filter_start_index <= detection_index < filter_end_index:
+                        filtered_detections.append(detection)
+            
+            # Gefilterte Erkennungen verwenden
+            original_count = len(detection_results)
+            detection_results = filtered_detections
+            
+            print(f"    Monte Carlo Filter: {len(filtered_detections)} von ursprünglich {original_count} Erkennungen in Tagen {filter_start_index}-{filter_end_index}")
+        
         # Dateinamen für Monte Carlo Runs anpassen
         if is_monte_carlo and mc_run is not None:
             json_filename = f"{ticker}_mc_run_{mc_run}_detection_results.json"
@@ -381,7 +413,7 @@ def setup_directories():
         directory.mkdir(parents=True, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")
 
-def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOLD, mc_days=30):
+def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOLD, mc_days=30, mc_repetitions=None):
     """Verarbeitet alle Ticker sequenziell mit Monte Carlo Verlängerung"""
     # YOLO-Modell laden
     try:
@@ -391,14 +423,17 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
         print(f"Fehler beim Laden des YOLO-Modells: {e}")
         return
     
+    # Wiederholungen setzen (Standard oder überschrieben)
+    repetitions = mc_repetitions if mc_repetitions is not None else MC_REPETITIONS
+    
     successful_processed = 0
     total_tickers = len(ticker_list)
-    total_runs = total_tickers * MC_REPETITIONS
+    total_runs = total_tickers * repetitions
     chunk_size = 180  # Definiere chunk_size hier für die Berechnung
     
     print(f"\nStarte Monte Carlo Batch-Verarbeitung von {total_tickers} Tickern...")
     print(f"Monte Carlo Tage: {mc_days}")
-    print(f"Wiederholungen pro Ticker: {MC_REPETITIONS}")
+    print(f"Wiederholungen pro Ticker: {repetitions}")
     print(f"Gesamtanzahl Verarbeitungen: {total_runs}")
     
     run_counter = 0
@@ -415,9 +450,9 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
         ticker_successful_runs = 0
         
         # Monte Carlo Wiederholungen für diesen Ticker
-        for mc_run in range(1, MC_REPETITIONS + 1):
+        for mc_run in range(1, repetitions + 1):
             run_counter += 1
-            print(f"  Run {mc_run}/{MC_REPETITIONS} für {ticker} (Gesamt: {run_counter}/{total_runs})")
+            print(f"  Run {mc_run}/{repetitions} für {ticker} (Gesamt: {run_counter}/{total_runs})")
             
             # 2. Chart mit Monte Carlo generieren (jeder Run hat andere Zufallswerte)
             chart_path = generate_chart(ticker, data, use_monte_carlo=True, mc_days=mc_days)
@@ -440,7 +475,7 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
                 mc_start_index = chunk_size - mc_days
                 
                 if save_detection_results(ticker, detection_results, yolo_results, mc_results_path, 
-                                        is_monte_carlo=True, mc_start_index=mc_start_index, mc_run=mc_run):
+                                        is_monte_carlo=True, mc_start_index=mc_start_index, mc_run=mc_run, chunk_size=chunk_size):
                     ticker_successful_runs += 1
                     print(f"    ✓ Run {mc_run} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
                 else:
@@ -456,13 +491,13 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
         
         if ticker_successful_runs > 0:
             successful_processed += 1
-            print(f"✓ {ticker} abgeschlossen: {ticker_successful_runs}/{MC_REPETITIONS} Runs erfolgreich")
+            print(f"✓ {ticker} abgeschlossen: {ticker_successful_runs}/{repetitions} Runs erfolgreich")
         else:
-            print(f"✗ {ticker} fehlgeschlagen: 0/{MC_REPETITIONS} Runs erfolgreich")
+            print(f"✗ {ticker} fehlgeschlagen: 0/{repetitions} Runs erfolgreich")
     
     print(f"\n=== Monte Carlo Batch-Verarbeitung abgeschlossen ===")
     print(f"Erfolgreich verarbeitete Ticker: {successful_processed}/{total_tickers}")
-    print(f"Gesamtanzahl erfolgreiche Runs: {sum([MC_REPETITIONS if i < successful_processed else 0 for i in range(total_tickers)])}")
+    print(f"Gesamtanzahl erfolgreiche Runs: {sum([repetitions if i < successful_processed else 0 for i in range(total_tickers)])}")
 
 def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
     """Verarbeitet alle Ticker sequenziell"""
@@ -502,7 +537,7 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
         
         if should_save:
             if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH, 
-                                    is_monte_carlo=False):
+                                    is_monte_carlo=False, chunk_size=180):
                 successful_processed += 1
                 print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
             else:
@@ -519,12 +554,58 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
     print(f"\n=== Batch-Verarbeitung abgeschlossen ===")
     print(f"Erfolgreich verarbeitet: {successful_processed}/{total_tickers} Ticker")
 
+def is_interactive():
+    """Prüft ob das Skript interaktiv ausgeführt wird"""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+def get_user_input_with_timeout(prompt, default_value, timeout=5):
+    """Holt Benutzereingabe mit Timeout für automatische Ausführung"""
+    if not is_interactive():
+        print(f"{prompt}[AUTO MODE - Standard: {default_value}]")
+        return default_value
+    
+    try:
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError()
+        
+        # Timeout nur auf Unix-Systemen verfügbar
+        if hasattr(signal, 'SIGALRM'):
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout)
+        
+        try:
+            user_input = input(prompt).strip()
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)  # Timeout zurücksetzen
+            return user_input if user_input else default_value
+        except (TimeoutError, KeyboardInterrupt):
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)
+            print(f"\n[TIMEOUT - Standard verwendet: {default_value}]")
+            return default_value
+            
+    except ImportError:
+        # Fallback ohne Timeout
+        try:
+            user_input = input(prompt).strip()
+            return user_input if user_input else default_value
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n[Standard verwendet: {default_value}]")
+            return default_value
+
 def main():
     """Hauptfunktion für Batch-Processing"""
     # Logging konfigurieren
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
     print("=== ChartScanAI Batch-Processing ===")
+    
+    # Interaktivitätsstatus prüfen
+    interactive = is_interactive()
+    if not interactive:
+        print("[AUTO MODE] - Nicht-interaktive Ausführung erkannt")
     
     # 1. Ordnerstruktur einrichten
     setup_directories()
@@ -535,17 +616,30 @@ def main():
         print(f"Keine Ticker gefunden. Erstellen Sie eine {INPUT_FILE} mit einem Ticker pro Zeile.")
         return
     
-    # 3. Monte Carlo Modus abfragen
-    print("\nOptionen:")
-    print("1. Normale Verarbeitung")
-    print("2. Monte Carlo Verarbeitung")
-    
-    choice = input("Wählen Sie eine Option (1 oder 2): ").strip()
+    # 3. Modus bestimmen (automatisch oder interaktiv)
+    if interactive:
+        print("\nOptionen:")
+        print("1. Normale Verarbeitung")
+        print("2. Monte Carlo Verarbeitung")
+        choice = get_user_input_with_timeout("Wählen Sie eine Option (1 oder 2, Standard: 2): ", "2", 10)
+    else:
+        choice = "2"  # Automatisch Monte Carlo wählen
+        print("[AUTO MODE] Monte Carlo Verarbeitung gewählt")
     
     if choice == "2":
-        mc_days = input("Anzahl Monte Carlo Tage (Standard: 30): ").strip()
-        mc_days = int(mc_days) if mc_days.isdigit() else 30
-        process_ticker_batch_monte_carlo(ticker_list, CONFIDENCE_THRESHOLD, mc_days)
+        if interactive:
+            mc_days_input = get_user_input_with_timeout("Anzahl Monte Carlo Tage (Standard: 30): ", "30", 10)
+            mc_days = int(mc_days_input) if mc_days_input.isdigit() else AUTO_MODE_MC_DAYS
+        else:
+            mc_days = AUTO_MODE_MC_DAYS
+            print(f"[AUTO MODE] Monte Carlo Tage: {mc_days}")
+        
+        # Automatische Ausführung: nur 1 Wiederholung
+        mc_repetitions = AUTO_MODE_MC_REPETITIONS if not interactive else None
+        if not interactive:
+            print(f"[AUTO MODE] Wiederholungen: {mc_repetitions}")
+        
+        process_ticker_batch_monte_carlo(ticker_list, CONFIDENCE_THRESHOLD, mc_days, mc_repetitions)
     else:
         process_ticker_batch(ticker_list)
     

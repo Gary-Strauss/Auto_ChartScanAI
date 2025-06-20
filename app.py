@@ -62,7 +62,7 @@ CONFIDENCE_THRESHOLD = 0.33  # Minimum confidence für AI-Erkennungen
 SAVE_ONLY_WITH_DETECTIONS = True  # True = nur speichern wenn Erkennungen vorhanden, False = immer speichern
 
 # Monte Carlo Configuration
-MC_REPETITIONS = 4  # Anzahl der Monte Carlo Wiederholungen pro Ticker
+MC_REPETITIONS = 1  # Anzahl der Monte Carlo Wiederholungen pro Ticker
 MC_DETECTION_FILTER_DAYS = 20  # Nur Erkennungen in den letzten X Tagen vor Monte Carlo speichern
 
 # Automatische Ausführung Configuration

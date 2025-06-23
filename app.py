@@ -69,6 +69,51 @@ MC_DETECTION_FILTER_DAYS = 20  # Nur Erkennungen in den letzten X Tagen vor Mont
 AUTO_MODE_MC_REPETITIONS = 1  # Wiederholungen bei automatischer Ausführung
 AUTO_MODE_MC_DAYS = 30  # Monte Carlo Tage bei automatischer Ausführung
 
+# Zeitrahmen Configuration
+SUPPORTED_TIMEFRAMES = ['daily', 'weekly', 'monthly']
+DEFAULT_TIMEFRAME = 'daily'
+
+def aggregate_data_by_timeframe(data, timeframe='daily'):
+    """Aggregiert OHLCV-Daten nach Zeitrahmen (daily, weekly, monthly)"""
+    if timeframe == 'daily' or data is None or data.empty:
+        return data
+    
+    try:
+        # Sicherstellen dass der Index ein DatetimeIndex ist
+        if not isinstance(data.index, pd.DatetimeIndex):
+            data.index = pd.to_datetime(data.index)
+        
+        # Aggregationsregeln für OHLCV-Daten
+        agg_rules = {
+            'Open': 'first',      # Erster Öffnungskurs der Periode
+            'High': 'max',        # Höchster Kurs der Periode
+            'Low': 'min',         # Niedrigster Kurs der Periode
+            'Close': 'last',      # Letzter Schlusskurs der Periode
+            'Adj Close': 'last',  # Letzter adjustierter Schlusskurs
+            'Volume': 'sum'       # Summiertes Volumen der Periode
+        }
+        
+        # Zeitrahmen-spezifische Aggregation
+        if timeframe == 'weekly':
+            # Wöchentliche Aggregation (Montag bis Freitag)
+            aggregated = data.resample('W-FRI').agg(agg_rules)
+        elif timeframe == 'monthly':
+            # Monatliche Aggregation (Monatsende)
+            aggregated = data.resample('M').agg(agg_rules)
+        else:
+            print(f"Warnung: Unbekannter Zeitrahmen '{timeframe}', verwende täglich")
+            return data
+        
+        # Leere Zeilen entfernen (falls keine Daten für eine Periode vorhanden)
+        aggregated = aggregated.dropna()
+        
+        print(f"Daten aggregiert von {len(data)} auf {len(aggregated)} {timeframe} Perioden")
+        return aggregated
+        
+    except Exception as e:
+        print(f"Fehler bei der Aggregation für Zeitrahmen '{timeframe}': {e}")
+        return data
+
 def read_ticker_list(input_file):
     """Liest Ticker-Liste aus TXT-Datei"""
     try:
@@ -141,7 +186,7 @@ def generate_monte_carlo_extension(data, patterns, days=30):
     
     return extended_data
 
-def load_parquet_data(ticker):
+def load_parquet_data(ticker, timeframe='daily'):
     """Lädt Parquet-Daten für einen Ticker basierend auf der dokumentierten Struktur"""
     try:
         # Alle Parquet-Dateien in allen Jahr-Partitionen laden
@@ -173,9 +218,6 @@ def load_parquet_data(ticker):
         combined_df['date'] = pd.to_datetime(combined_df['date'])
         combined_df = combined_df.sort_values('date')
         
-        # Nur die letzten 180 Datenpunkte behalten
-        combined_df = combined_df.tail(180)
-        
         # Index auf Datum setzen und Spalten für mplfinance anpassen
         combined_df.set_index('date', inplace=True)
         
@@ -190,19 +232,33 @@ def load_parquet_data(ticker):
         }
         combined_df.rename(columns=column_mapping, inplace=True)
         
-        print(f"Daten für {ticker} geladen: {len(combined_df)} Datensätze von {combined_df.index.min()} bis {combined_df.index.max()}")
+        # Daten nach Zeitrahmen aggregieren
+        combined_df = aggregate_data_by_timeframe(combined_df, timeframe)
+        
+        # Nach Aggregation die letzten 180 Datenpunkte behalten
+        combined_df = combined_df.tail(180)
+        
+        print(f"Daten für {ticker} ({timeframe}) geladen: {len(combined_df)} Datensätze von {combined_df.index.min()} bis {combined_df.index.max()}")
         return combined_df
         
     except Exception as e:
         print(f"Fehler beim Laden der Parquet-Daten für {ticker}: {e}")
         return None
 
-def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use_monte_carlo=False, mc_days=30):
+def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use_monte_carlo=False, mc_days=30, timeframe='daily'):
     """Generiert Chart aus Parquet-Daten und speichert als temporäres Bild"""
     try:
         if data is None or data.empty:
             print(f"Keine Daten für {ticker} verfügbar")
             return None
+        
+        # Zeitrahmen-spezifische Bezeichnungen
+        timeframe_labels = {
+            'daily': 'Candles',
+            'weekly': 'Weeks', 
+            'monthly': 'Months'
+        }
+        period_label = timeframe_labels.get(timeframe, 'Periods')
         
         # Monte Carlo Verlängerung wenn aktiviert
         if use_monte_carlo:
@@ -221,12 +277,12 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
             
             # Markierung wo echte Daten enden und MC beginnt
             mc_start_index = chunk_size - mc_days
-            chart_title = f"{ticker} Latest {len(data_subset)} Candles (MC: {mc_days} days)"
+            chart_title = f"{ticker} Latest {len(data_subset)} {period_label} ({timeframe.title()}, MC: {mc_days})"
             
         else:
-            # Letzte 180 Tage auswählen
+            # Letzte chunk_size Perioden auswählen
             data_subset = data.iloc[-chunk_size:]
-            chart_title = f"{ticker} Latest {len(data_subset)} Candles"
+            chart_title = f"{ticker} Latest {len(data_subset)} {period_label} ({timeframe.title()})"
         
         if len(data_subset) < 10:  # Mindestens 10 Datenpunkte für sinnvollen Chart
             print(f"Zu wenige Daten für {ticker}: {len(data_subset)} Datenpunkte")
@@ -252,8 +308,8 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
         if use_monte_carlo:
             ax[0].axvline(x=mc_start_index, color='darkblue', linestyle='--', alpha=0.7, linewidth=2)
         
-        # Temporäres Bild speichern
-        suffix = "_mc_chart.png" if use_monte_carlo else "_chart.png"
+        # Temporäres Bild speichern mit Zeitrahmen im Dateinamen
+        suffix = f"_{timeframe}_mc_chart.png" if use_monte_carlo else f"_{timeframe}_chart.png"
         temp_image_path = TEMP_CHARTS_PATH / f"{ticker}{suffix}"
         fig.savefig(temp_image_path, format='png', dpi=dpi, bbox_inches='tight')
         
@@ -261,7 +317,7 @@ def generate_chart(ticker, data, chunk_size=180, figsize=(18, 6.5), dpi=100, use
         import matplotlib.pyplot as plt
         plt.close(fig)
         
-        print(f"Chart für {ticker} erstellt: {temp_image_path}")
+        print(f"Chart für {ticker} ({timeframe}) erstellt: {temp_image_path}")
         return temp_image_path
         
     except Exception as e:
@@ -339,25 +395,28 @@ def analyze_detection_positions(detection_results, chunk_size=180):
     
     return analysis
 
-def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None, chunk_size=180):
+def save_detection_results(ticker, detection_results, results, output_folder, is_monte_carlo=False, mc_start_index=None, mc_run=None, chunk_size=180, timeframe='daily'):
     """Speichert AI-Erkennungsergebnisse"""
     try:
         # Positionsanalyse durchführen
         position_analysis = analyze_detection_positions(detection_results, chunk_size)
         
-        # Dateinamen für Monte Carlo Runs anpassen
+        # Dateinamen für Monte Carlo Runs und Zeitrahmen anpassen
+        timeframe_suffix = f"_{timeframe}" if timeframe != 'daily' else ""
+        
         if is_monte_carlo and mc_run is not None:
-            json_filename = f"{ticker}_mc_run_{mc_run}_detection_results.json"
-            annotated_filename = f"{ticker}_mc_run_{mc_run}_annotated.png"
+            json_filename = f"{ticker}{timeframe_suffix}_mc_run_{mc_run}_detection_results.json"
+            annotated_filename = f"{ticker}{timeframe_suffix}_mc_run_{mc_run}_annotated.png"
         else:
-            json_filename = f"{ticker}_detection_results.json"
-            annotated_filename = f"{ticker}_annotated.png"
+            json_filename = f"{ticker}{timeframe_suffix}_detection_results.json"
+            annotated_filename = f"{ticker}{timeframe_suffix}_annotated.png"
         
         # Erkennungsergebnisse als JSON speichern
         results_file = JSON_RESULTS_PATH / json_filename
         with open(results_file, 'w') as f:
             json.dump({
                 'ticker': ticker,
+                'timeframe': timeframe,
                 'timestamp': datetime.now().isoformat(),
                 'detections': detection_results,
                 'total_detections': len(detection_results),
@@ -423,7 +482,7 @@ def save_detection_results(ticker, detection_results, results, output_folder, is
             annotated_image_path = Path(output_folder) / annotated_filename
             annotated_image_pil.save(annotated_image_path)
             
-        print(f"Erkennungsergebnisse für {ticker} gespeichert in {output_folder}")
+        print(f"Erkennungsergebnisse für {ticker} ({timeframe}) gespeichert in {output_folder}")
         return True
         
     except Exception as e:
@@ -437,7 +496,7 @@ def setup_directories():
         directory.mkdir(parents=True, exist_ok=True)
         print(f"Ordner erstellt/überprüft: {directory}")
 
-def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOLD, mc_days=30, mc_repetitions=None):
+def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOLD, mc_days=30, mc_repetitions=None, timeframe='daily'):
     """Verarbeitet alle Ticker sequenziell mit Monte Carlo Verlängerung"""
     # YOLO-Modell laden
     try:
@@ -456,6 +515,7 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
     chunk_size = 180  # Definiere chunk_size hier für die Berechnung
     
     print(f"\nStarte Monte Carlo Batch-Verarbeitung von {total_tickers} Tickern...")
+    print(f"Zeitrahmen: {timeframe}")
     print(f"Monte Carlo Tage: {mc_days}")
     print(f"Wiederholungen pro Ticker: {repetitions}")
     print(f"Gesamtanzahl Verarbeitungen: {total_runs}")
@@ -463,10 +523,10 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
     run_counter = 0
     
     for i, ticker in enumerate(ticker_list, 1):
-        print(f"\n[{i}/{total_tickers}] Verarbeite {ticker} mit Monte Carlo...")
+        print(f"\n[{i}/{total_tickers}] Verarbeite {ticker} mit Monte Carlo ({timeframe})...")
         
         # 1. Parquet-Daten einmal laden für alle Wiederholungen
-        data = load_parquet_data(ticker)
+        data = load_parquet_data(ticker, timeframe)
         if data is None:
             print(f"Überspringe {ticker} - keine Daten verfügbar")
             continue
@@ -479,7 +539,7 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
             print(f"  Run {mc_run}/{repetitions} für {ticker} (Gesamt: {run_counter}/{total_runs})")
             
             # 2. Chart mit Monte Carlo generieren (jeder Run hat andere Zufallswerte)
-            chart_path = generate_chart(ticker, data, use_monte_carlo=True, mc_days=mc_days)
+            chart_path = generate_chart(ticker, data, use_monte_carlo=True, mc_days=mc_days, timeframe=timeframe)
             if chart_path is None:
                 print(f"    ✗ Chart-Erstellung fehlgeschlagen für Run {mc_run}")
                 continue
@@ -492,14 +552,15 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
             
             if should_save:
                 # Monte Carlo Ergebnisse in separatem Ordner speichern
-                mc_results_path = RESULTS_PATH / "monte_carlo"
-                mc_results_path.mkdir(exist_ok=True)
+                mc_results_path = RESULTS_PATH / "monte_carlo" / timeframe
+                mc_results_path.mkdir(parents=True, exist_ok=True)
                 
                 # mc_start_index für die Trennlinie berechnen
                 mc_start_index = chunk_size - mc_days
                 
                 if save_detection_results(ticker, detection_results, yolo_results, mc_results_path, 
-                                        is_monte_carlo=True, mc_start_index=mc_start_index, mc_run=mc_run, chunk_size=chunk_size):
+                                        is_monte_carlo=True, mc_start_index=mc_start_index, mc_run=mc_run, 
+                                        chunk_size=chunk_size, timeframe=timeframe):
                     ticker_successful_runs += 1
                     print(f"    ✓ Run {mc_run} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
                 else:
@@ -523,7 +584,7 @@ def process_ticker_batch_monte_carlo(ticker_list, confidence=CONFIDENCE_THRESHOL
     print(f"Erfolgreich verarbeitete Ticker: {successful_processed}/{total_tickers}")
     print(f"Gesamtanzahl erfolgreiche Runs: {sum([repetitions if i < successful_processed else 0 for i in range(total_tickers)])}")
 
-def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
+def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD, timeframe='daily'):
     """Verarbeitet alle Ticker sequenziell"""
     # YOLO-Modell laden
     try:
@@ -537,18 +598,19 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
     total_tickers = len(ticker_list)
     
     print(f"\nStarte Batch-Verarbeitung von {total_tickers} Tickern...")
+    print(f"Zeitrahmen: {timeframe}")
     
     for i, ticker in enumerate(ticker_list, 1):
-        print(f"\n[{i}/{total_tickers}] Verarbeite {ticker}...")
+        print(f"\n[{i}/{total_tickers}] Verarbeite {ticker} ({timeframe})...")
         
         # 1. Parquet-Daten laden
-        data = load_parquet_data(ticker)
+        data = load_parquet_data(ticker, timeframe)
         if data is None:
             print(f"Überspringe {ticker} - keine Daten verfügbar")
             continue
         
         # 2. Chart generieren
-        chart_path = generate_chart(ticker, data, use_monte_carlo=False)
+        chart_path = generate_chart(ticker, data, use_monte_carlo=False, timeframe=timeframe)
         if chart_path is None:
             print(f"Überspringe {ticker} - Chart-Erstellung fehlgeschlagen")
             continue
@@ -560,8 +622,12 @@ def process_ticker_batch(ticker_list, confidence=CONFIDENCE_THRESHOLD):
         should_save = not SAVE_ONLY_WITH_DETECTIONS or len(detection_results) > 0
         
         if should_save:
-            if save_detection_results(ticker, detection_results, yolo_results, RESULTS_PATH, 
-                                    is_monte_carlo=False, chunk_size=180):
+            # Ergebnisse in zeitrahmen-spezifischem Ordner speichern
+            timeframe_results_path = RESULTS_PATH / timeframe
+            timeframe_results_path.mkdir(exist_ok=True)
+            
+            if save_detection_results(ticker, detection_results, yolo_results, timeframe_results_path, 
+                                    is_monte_carlo=False, chunk_size=180, timeframe=timeframe):
                 successful_processed += 1
                 print(f"✓ {ticker} erfolgreich verarbeitet ({len(detection_results)} Erkennungen)")
             else:
@@ -640,7 +706,18 @@ def main():
         print(f"Keine Ticker gefunden. Erstellen Sie eine {INPUT_FILE} mit einem Ticker pro Zeile.")
         return
     
-    # 3. Modus bestimmen (automatisch oder interaktiv)
+    # 3. Zeitrahmen auswählen
+    if interactive:
+        print(f"\nVerfügbare Zeitrahmen: {', '.join(SUPPORTED_TIMEFRAMES)}")
+        timeframe = get_user_input_with_timeout(f"Zeitrahmen wählen (Standard: {DEFAULT_TIMEFRAME}): ", DEFAULT_TIMEFRAME, 10)
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            print(f"Ungültiger Zeitrahmen '{timeframe}', verwende Standard: {DEFAULT_TIMEFRAME}")
+            timeframe = DEFAULT_TIMEFRAME
+    else:
+        timeframe = DEFAULT_TIMEFRAME
+        print(f"[AUTO MODE] Zeitrahmen: {timeframe}")
+    
+    # 4. Modus bestimmen (automatisch oder interaktiv)
     if interactive:
         print("\nOptionen:")
         print("1. Normale Verarbeitung")
@@ -663,9 +740,9 @@ def main():
         if not interactive:
             print(f"[AUTO MODE] Wiederholungen: {mc_repetitions}")
         
-        process_ticker_batch_monte_carlo(ticker_list, CONFIDENCE_THRESHOLD, mc_days, mc_repetitions)
+        process_ticker_batch_monte_carlo(ticker_list, CONFIDENCE_THRESHOLD, mc_days, mc_repetitions, timeframe)
     else:
-        process_ticker_batch(ticker_list)
+        process_ticker_batch(ticker_list, CONFIDENCE_THRESHOLD, timeframe)
     
     print("\nBatch-Processing beendet.")
 
